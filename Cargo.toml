@@ -1,0 +1,22 @@
+[package]
+name = "reader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.72"
+clap = { version = "4.3.19", features = ["derive"] }
+eframe = { version = "0.22.0", default-features = false, features = [
+    "glow",
+    "persistence",
+    "ron",
+] }
+egui = "0.22.0"
+egui_extras = { version = "0.22.0", features = ["image"] }
+image = { version = "0.24.6", default-features = false, features = [
+    "png",
+    "jpeg",
+] }
+rfd = "0.11.4"
+serde = { version = "1.0.183", features = ["derive"] }
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
