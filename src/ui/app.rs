@@ -262,6 +262,28 @@ impl ReaderApp {
             self.page_prompt = Some(String::new());
         }
     }
+
+    fn handle_file_drops(&mut self, i: &InputState) {
+        let files = &i.raw.dropped_files;
+
+        if files.is_empty() {
+           return; 
+        }
+
+        if files.len() > 1 {
+            return show_err_dialog(anyhow!("Please drop only one item"));
+        }
+
+        let file = files.get(0).unwrap();
+
+        let Some(path) = &file.path else {
+            return show_err_dialog(anyhow!("Dropped file must be a file stored on disk"));
+        };
+
+        if let Err(err) = self.load_path(path.to_owned()) {
+            show_err_dialog(err);
+        }
+    }
 }
 
 impl eframe::App for ReaderApp {
@@ -273,7 +295,10 @@ impl eframe::App for ReaderApp {
         CentralPanel::default()
             .frame(Frame::none())
             .show(ctx, |ui| {
-                ctx.input(|i| self.handle_inputs(i));
+                ctx.input(|i| {
+                    self.handle_inputs(i);
+                    self.handle_file_drops(i);
+                });
 
                 let win_size = frame.info().window_info.size;
 
