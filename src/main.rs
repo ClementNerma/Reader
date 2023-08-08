@@ -1,3 +1,12 @@
+#![forbid(unsafe_code)]
+#![forbid(unused_must_use)]
+#![warn(unused_crate_dependencies)]
+// Don't display terminal when launching the program on Windows
+#![windows_subsystem = "windows"]
+
+// Required for image decoding support
+use image as _;
+
 mod cmd;
 mod gap_vec;
 mod img_sources;
