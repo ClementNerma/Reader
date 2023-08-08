@@ -5,7 +5,6 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.72"
-clap = { version = "4.3.19", features = ["derive"] }
 eframe = { version = "0.22.0", default-features = false, features = [
     "glow",
     "persistence",
