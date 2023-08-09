@@ -222,11 +222,7 @@ impl ReaderApp {
             };
         }
 
-        if i.scroll_delta != Vec2::ZERO {
-            println!("{:?}", i.scroll_delta);
-        }
-
-        if i.key_pressed(Key::ArrowLeft) || i.scroll_delta.x > 0.0 || i.scroll_delta.y > 0.0 {
+        if i.key_pressed(Key::ArrowLeft) || i.scroll_delta.x >= 50.0 || i.scroll_delta.y >= 50.0 {
             if i.modifiers.ctrl {
                 if let Err(err) = self.relative_file_change(-1) {
                     show_err_dialog(err);
@@ -236,7 +232,7 @@ impl ReaderApp {
             }
         }
 
-        if i.key_pressed(Key::ArrowRight) || i.key_pressed(Key::Space) || i.scroll_delta.x < 0.0 || i.scroll_delta.y < 0.0 {
+        if i.key_pressed(Key::ArrowRight) || i.key_pressed(Key::Space) || i.scroll_delta.x <= -50.0 || i.scroll_delta.y <= -50.0 {
             if i.modifiers.ctrl {
                 if let Err(err) = self.relative_file_change(1) {
                     show_err_dialog(err);
