@@ -5,17 +5,17 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc, RwLock,
     },
-    thread::JoinHandle,
+    thread::JoinHandle, borrow::Cow,
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
-use egui::{Context, InputState, RichText, Color32, Label, Area, Align2, Vec2, Key, CentralPanel, Frame, Window, Ui, Layout, Align};
+use egui::{Context, InputState, RichText, Color32, Label, Area, Align2, Vec2, Key, CentralPanel, Frame, Window, Ui, Layout, Align, Spinner};
 use egui_extras::RetainedImage;
 use rfd::FileDialog;
 
 use crate::{
     gap_vec::GapVec,
-    img_sources::{load_image_source, ImageSource, IMG_EXTENSIONS},
+    img_sources::{load_image_source, ImageSource, IMG_EXTENSIONS, EmptySource},
     settings::Settings,
     show_err_dialog,
 };
@@ -23,12 +23,12 @@ use crate::{
 pub struct ReaderApp {
     ctx: Context,
 
-    thread_handle: Option<Arc<JoinHandle<()>>>,
-    thread_stop_signal: Arc<AtomicBool>,
+    thread_handles: Vec<JoinHandle<()>>,
+    threads_stop_signal: Arc<AtomicBool>,
 
     settings: Arc<RwLock<Settings>>,
 
-    path: PathBuf,
+    path: Option<PathBuf>,
     total_pages: usize,
 
     loaded_pages: Arc<RwLock<GapVec<Result<RetainedImage>>>>,
@@ -40,7 +40,7 @@ pub struct ReaderApp {
 impl ReaderApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        path: PathBuf,
+        path: Option<PathBuf>,
         // settings: Settings,
     ) -> Result<Self> {
         let settings = match cc.storage {
@@ -50,7 +50,10 @@ impl ReaderApp {
 
         Ok(Self::create(
             cc.egui_ctx.clone(),
-            load_image_source(&path)?,
+            match path {
+                Some(ref path) => load_image_source(path)?,
+                None => Box::new(EmptySource::new())
+            },
             path,
             Arc::new(RwLock::new(settings)),
         ))
@@ -58,55 +61,68 @@ impl ReaderApp {
 
     fn create(
         ctx: Context,
-        mut img_source: Box<dyn ImageSource>,
-        path: PathBuf,
+        img_source: Box<dyn ImageSource>,
+        path: Option<PathBuf>,
         settings: Arc<RwLock<Settings>>,
     ) -> Self {
-        // TODO: open archive
-
         let total_pages = img_source.total_pages();
 
         let loaded_pages = Arc::new(RwLock::new(GapVec::new(img_source.total_pages())));
-        let loaded_pages_bis = Arc::clone(&loaded_pages);
+        
+        let threads_stop_signal = Arc::new(AtomicBool::new(false));
+        
+        let mut thread_handles = vec![];
 
-        let path_bis = path.clone();
-        let ctx_bis = ctx.clone();
+        let threads_count = 4;
 
-        let thread_stop_signal = Arc::new(AtomicBool::new(false));
-        let thread_stop_signal_bis = Arc::clone(&thread_stop_signal);
+        for thread_num in 0..threads_count {
+            let mut img_source = img_source.quick_clone();
 
-        let thread_handle = Some(Arc::new(std::thread::spawn(move || {
-            let total_pages = img_source.total_pages();
+            let path = path.clone();
+            let ctx_bis = ctx.clone();
+            let thread_stop_signal_bis = Arc::clone(&threads_stop_signal);
+            let loaded_pages_bis = Arc::clone(&loaded_pages);
 
-            let mut load_page = |page: usize| -> Result<RetainedImage> {
-                let img_bytes = img_source.load_page(page)?;
+            thread_handles.push(std::thread::spawn(move || {
+                let total_pages = img_source.total_pages();
 
-                let img_debug_name = format!("{}:[page {}]", path_bis.display(), page);
+                let mut load_page = |page: usize| -> Result<RetainedImage> {
+                    let img_debug_name = format!("{}:[page {}]", match path {
+                        Some(ref path) => path.to_string_lossy(),
+                        None => Cow::Borrowed("<no path>")
+                    }, page);
 
-                let img = RetainedImage::from_image_bytes(img_debug_name, &img_bytes)
-                    .map_err(|err| anyhow!("Failed to decode image: {err}"))?;
+                    let img_bytes = img_source.load_page(page)?;
 
-                Ok(img)
-            };
+                    let img = RetainedImage::from_image_bytes(img_debug_name, &img_bytes)
+                        .map_err(|err| anyhow!("Failed to decode image: {err}"))?;
 
-            // TODO: parallel (4 threads?)
-            for page in 0..total_pages {
-                if thread_stop_signal_bis.load(Ordering::Acquire) {
-                    return;
+                    Ok(img)
+                };
+
+                // TODO: parallel (4 threads?)
+                for page in 0..total_pages {
+                    if page % threads_count != thread_num {
+                        continue;
+                    }
+
+                    if thread_stop_signal_bis.load(Ordering::Acquire) {
+                        return;
+                    }
+
+                    let img = load_page(page);
+
+                    loaded_pages_bis.write().unwrap().set(page, img);
+
+                    ctx_bis.request_repaint();
                 }
-
-                let img = load_page(page);
-
-                loaded_pages_bis.write().unwrap().set(page, img);
-
-                ctx_bis.request_repaint();
-            }
-        })));
+            }));
+    }
 
         Self {
             ctx,
-            thread_handle,
-            thread_stop_signal,
+            thread_handles,
+            threads_stop_signal,
             path,
             loaded_pages,
             settings,
@@ -119,14 +135,17 @@ impl ReaderApp {
     fn load_path(&mut self, path: PathBuf) -> Result<()> {
         let img_source = load_image_source(&path)?;
 
-        self.thread_stop_signal.store(true, Ordering::Release);
-        let thread_handle = self.thread_handle.take().unwrap();
-        Arc::into_inner(thread_handle).unwrap().join().unwrap();
+        self.threads_stop_signal.store(true, Ordering::Release);
+
+        
+        while let Some(thread_handle) = self.thread_handles.pop() {
+            thread_handle.join().map_err(|_| anyhow!("Internal error: failed to join thread"))?;
+        }
 
         *self = Self::create(
             self.ctx.clone(),
             img_source,
-            path,
+            Some(path),
             Arc::clone(&self.settings),
         );
 
@@ -134,7 +153,11 @@ impl ReaderApp {
     }
 
     fn relative_file_change(&mut self, relative: isize) -> Result<()> {
-        let Some(parent) = self.path.parent() else {
+        let Some(path) = &self.path else {
+            return Ok(());
+        };
+
+        let Some(parent) = path.parent() else {
             return Ok(())
         };
 
@@ -142,7 +165,7 @@ impl ReaderApp {
 
         let index = items
             .iter()
-            .position(|c| c.path() == self.path)
+            .position(|c| &c.path() == path)
             .context("File not found in parent directory")?;
 
         if -relative > isize::try_from(index).unwrap() {
@@ -165,9 +188,9 @@ impl ReaderApp {
             inc *= 2;
         }
 
-        if settings.right_to_left {
-            inc *= -1;
-        }
+        // if settings.right_to_left {
+        //     inc *= -1;
+        // }
 
         if inc < 0 {
             let dec = usize::try_from(-inc).unwrap();
@@ -199,7 +222,11 @@ impl ReaderApp {
             };
         }
 
-        if i.key_pressed(Key::ArrowLeft) {
+        if i.scroll_delta != Vec2::ZERO {
+            println!("{:?}", i.scroll_delta);
+        }
+
+        if i.key_pressed(Key::ArrowLeft) || i.scroll_delta.x < 0.0 || i.scroll_delta.y < 0.0 {
             if i.modifiers.ctrl {
                 if let Err(err) = self.relative_file_change(-1) {
                     show_err_dialog(err);
@@ -209,7 +236,7 @@ impl ReaderApp {
             }
         }
 
-        if i.key_pressed(Key::ArrowRight) || i.key_pressed(Key::Space) {
+        if i.key_pressed(Key::ArrowRight) || i.key_pressed(Key::Space) || i.scroll_delta.x > 0.0 || i.scroll_delta.y > 0.0 {
             if i.modifiers.ctrl {
                 if let Err(err) = self.relative_file_change(1) {
                     show_err_dialog(err);
@@ -222,7 +249,7 @@ impl ReaderApp {
         if i.key_pressed(Key::O) && i.modifiers.ctrl {
             let mut dialog = FileDialog::new().add_filter("comics", IMG_EXTENSIONS);
 
-            if let Some(parent_dir) = self.path.parent() {
+            if let Some(parent_dir) = self.path.as_ref().and_then(|path| path.parent()) {
                 dialog = dialog.set_directory(parent_dir);
             }
 
@@ -345,6 +372,7 @@ impl eframe::App for ReaderApp {
                         match self.loaded_pages.read().unwrap().get(page) {
                             None => {
                                 ui.heading("Loading...");
+                                ui.add(Spinner::new());
                             }
 
                             Some(page_img) => match page_img {
@@ -364,7 +392,7 @@ impl eframe::App for ReaderApp {
                 };
 
                 let pages = if self.total_pages == 0 {
-                    ui.label("No image found");
+                    ui.heading("Nothing to display");
                     
                     (None, None)
                 } else if !settings.double_page || self.page + 1 == self.total_pages {
@@ -374,6 +402,7 @@ impl eframe::App for ReaderApp {
 
                     (Some(self.page), None)
                 } else {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
                     ui.columns(2, |columns| {
                         let (left_page, right_page) = if settings.right_to_left {
                             (self.page + 1, self.page)

@@ -1,5 +1,8 @@
+mod empty;
 mod image_directory;
 mod zip_file;
+
+pub use empty::EmptySource;
 
 use std::path::Path;
 
@@ -26,6 +29,9 @@ pub trait ImageSource: Send + Sync {
 
     /// Load a page (= an image) as a vector of bytes
     fn load_page(&mut self, page: usize) -> Result<Vec<u8>>;
+
+    /// Quick clone
+    fn quick_clone(&self) -> Box<dyn ImageSource>;
 }
 
 /// List of supported image extensions (used for filtering)
@@ -42,5 +48,5 @@ pub fn load_image_source(path: &Path) -> Result<Box<dyn ImageSource>> {
     }
 
     identify_source!(ImageDirectory, ZipFile);
-    bail!("Invalid item type provided");
+    bail!("Provided item is not supported");
 }

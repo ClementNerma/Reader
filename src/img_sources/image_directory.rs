@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use super::{ImageSource, IMG_EXTENSIONS};
 
 /// Handler for directory of images
+#[derive(Clone)]
 pub struct ImageDirectory {
     image_files: Vec<PathBuf>,
 }
@@ -62,5 +63,12 @@ impl ImageSource for ImageDirectory {
     fn load_page(&mut self, page: usize) -> Result<Vec<u8>> {
         let page_path = self.image_files.get(page).context("Page not found")?;
         Ok(fs::read(page_path)?)
+    }
+
+    fn quick_clone(&self) -> Box<dyn ImageSource>
+    where
+        Self: Sized,
+    {
+        Box::new(self.clone())
     }
 }

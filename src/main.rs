@@ -6,7 +6,6 @@
 
 use std::path::PathBuf;
 
-use anyhow::anyhow;
 // Required for image decoding support
 use image as _;
 
@@ -20,12 +19,7 @@ use eframe::NativeOptions;
 use self::ui::{app::ReaderApp, show_err_dialog};
 
 fn main() -> eframe::Result<()> {
-    let Some(path) = std::env::args().nth(1) else {
-        show_err_dialog(anyhow!("Please open a comic with this program"));
-        std::process::exit(1);
-    };
-
-    let path = PathBuf::from(path);
+    let path = std::env::args().nth(1).map(PathBuf::from);
 
     eframe::run_native(
         "reader",

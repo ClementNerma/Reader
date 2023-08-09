@@ -1,4 +1,9 @@
-use std::{fs::File, io, path::Path};
+use std::{
+    fs::File,
+    io,
+    path::Path,
+    sync::{Arc, RwLock},
+};
 
 use anyhow::{Context, Result};
 use zip::ZipArchive;
@@ -8,8 +13,9 @@ use crate::img_sources::IMG_EXTENSIONS;
 use super::ImageSource;
 
 /// ZIP archive handler
+#[derive(Clone)]
 pub struct ZipFile {
-    archive: ZipArchive<File>,
+    archive: Arc<RwLock<ZipArchive<File>>>,
     page_file_indexes: Vec<usize>,
 }
 
@@ -62,7 +68,7 @@ impl ImageSource for ZipFile {
         page_files.sort_by(|(_, a), (_, b)| a.cmp(b));
 
         Ok(Self {
-            archive,
+            archive: Arc::new(RwLock::new(archive)),
             page_file_indexes: page_files.into_iter().map(|(i, _)| i).collect(),
         })
     }
@@ -72,8 +78,9 @@ impl ImageSource for ZipFile {
     }
 
     fn load_page(&mut self, page: usize) -> Result<Vec<u8>> {
-        let mut file = self
-            .archive
+        let mut archive = self.archive.write().unwrap();
+
+        let mut file = archive
             .by_index(self.page_file_indexes[page])
             .context("Failed to read file in archive")?;
 
@@ -82,5 +89,12 @@ impl ImageSource for ZipFile {
         io::copy(&mut file, &mut out).context("Failed to read page file's content from archive")?;
 
         Ok(out)
+    }
+
+    fn quick_clone(&self) -> Box<dyn ImageSource>
+    where
+        Self: Sized,
+    {
+        Box::new(self.clone())
     }
 }
