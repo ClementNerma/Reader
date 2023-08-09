@@ -17,7 +17,7 @@ use crate::{
     gap_vec::GapVec,
     img_sources::{load_image_source, ImageSource, EmptySource},
     settings::Settings,
-    show_err_dialog,
+    show_err_dialog, LOGICAL_CORES,
 };
 
 pub struct ReaderApp {
@@ -73,7 +73,7 @@ impl ReaderApp {
         
         let mut thread_handles = vec![];
 
-        let threads_count = 4;
+        let threads_count = *LOGICAL_CORES;
 
         for thread_num in 0..threads_count {
             let mut img_source = img_source.quick_clone();

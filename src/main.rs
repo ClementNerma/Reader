@@ -15,8 +15,11 @@ mod settings;
 mod ui;
 
 use eframe::NativeOptions;
+use once_cell::sync::Lazy;
 
 use self::ui::{app::ReaderApp, show_err_dialog};
+
+static LOGICAL_CORES: Lazy<usize> = Lazy::new(num_cpus::get_physical);
 
 fn main() -> eframe::Result<()> {
     let path = std::env::args().nth(1).map(PathBuf::from);
