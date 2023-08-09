@@ -35,7 +35,7 @@ pub trait ImageSource: Send + Sync {
 }
 
 /// List of supported image extensions (used for filtering)
-pub static IMG_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
+static IMG_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
 
 /// Try to load a path as an image source
 pub fn load_image_source(path: &Path) -> Result<Box<dyn ImageSource>> {

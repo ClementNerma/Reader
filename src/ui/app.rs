@@ -15,7 +15,7 @@ use rfd::FileDialog;
 
 use crate::{
     gap_vec::GapVec,
-    img_sources::{load_image_source, ImageSource, IMG_EXTENSIONS, EmptySource},
+    img_sources::{load_image_source, ImageSource, EmptySource},
     settings::Settings,
     show_err_dialog,
 };
@@ -247,7 +247,7 @@ impl ReaderApp {
         }
 
         if i.key_pressed(Key::O) && i.modifiers.ctrl {
-            let mut dialog = FileDialog::new().add_filter("comics", IMG_EXTENSIONS);
+            let mut dialog = FileDialog::new().add_filter("comics", &["zip", "cbz"]);
 
             if let Some(parent_dir) = self.path.as_ref().and_then(|path| path.parent()) {
                 dialog = dialog.set_directory(parent_dir);
