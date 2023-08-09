@@ -2,7 +2,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, Ordering, AtomicUsize},
         Arc, RwLock,
     },
     thread::JoinHandle, borrow::Cow,
@@ -25,14 +25,14 @@ pub struct ReaderApp {
 
     thread_handles: Vec<JoinHandle<()>>,
     threads_stop_signal: Arc<AtomicBool>,
-
+    
     settings: Arc<RwLock<Settings>>,
 
     path: Option<PathBuf>,
     total_pages: usize,
 
     loaded_pages: Arc<RwLock<GapVec<Result<RetainedImage>>>>,
-    page: usize,
+    current_page: Arc<AtomicUsize>,
 
     page_prompt: Option<String>,
 }
@@ -66,11 +66,10 @@ impl ReaderApp {
         settings: Arc<RwLock<Settings>>,
     ) -> Self {
         let total_pages = img_source.total_pages();
-
         let loaded_pages = Arc::new(RwLock::new(GapVec::new(img_source.total_pages())));
-        
         let threads_stop_signal = Arc::new(AtomicBool::new(false));
-        
+        let current_page = Arc::new(AtomicUsize::new(0));
+
         let mut thread_handles = vec![];
 
         let threads_count = *LOGICAL_CORES;
@@ -82,10 +81,9 @@ impl ReaderApp {
             let ctx_bis = ctx.clone();
             let thread_stop_signal_bis = Arc::clone(&threads_stop_signal);
             let loaded_pages_bis = Arc::clone(&loaded_pages);
+            let current_page = Arc::clone(&current_page);
 
             thread_handles.push(std::thread::spawn(move || {
-                let total_pages = img_source.total_pages();
-
                 let mut load_page = |page: usize| -> Result<RetainedImage> {
                     let img_debug_name = format!("{}:[page {}]", match path {
                         Some(ref path) => path.to_string_lossy(),
@@ -100,24 +98,26 @@ impl ReaderApp {
                     Ok(img)
                 };
 
-                // TODO: parallel (4 threads?)
-                for page in 0..total_pages {
-                    if page % threads_count != thread_num {
-                        continue;
-                    }
+                let mut pages_to_load = (0..total_pages).filter(|i| i % threads_count == thread_num).collect::<Vec<_>>();
 
-                    if thread_stop_signal_bis.load(Ordering::Acquire) {
-                        return;
-                    }
+                while !pages_to_load.is_empty() {
+                    let prioritize_loading_from = current_page.load(Ordering::Acquire);
+
+                    let page_index_in_vec = pages_to_load.iter().position(|i| *i >= prioritize_loading_from).unwrap_or(0);
+                    let page = pages_to_load.remove(page_index_in_vec);
 
                     let img = load_page(page);
 
                     loaded_pages_bis.write().unwrap().set(page, img);
 
                     ctx_bis.request_repaint();
+                    
+                    if thread_stop_signal_bis.load(Ordering::Acquire) {
+                        return;
+                    }
                 }
             }));
-    }
+        }
 
         Self {
             ctx,
@@ -127,7 +127,7 @@ impl ReaderApp {
             loaded_pages,
             settings,
             total_pages,
-            page: 0,
+            current_page,
             page_prompt: None,
         }
     }
@@ -192,34 +192,36 @@ impl ReaderApp {
         //     inc *= -1;
         // }
 
+        let current_page = self.current_page.load(Ordering::Acquire);
+
         if inc < 0 {
             let dec = usize::try_from(-inc).unwrap();
-            self.page = if dec >= self.page { 0 } else { self.page - dec };
+            self.current_page.store(if dec >= current_page { 0 } else { current_page - dec }, Ordering::Release);
         } else {
-            let c_page = self.page + usize::try_from(inc).unwrap();
+            let c_page = current_page + usize::try_from(inc).unwrap();
             let max_page = if self.total_pages == 0 {
                 0
             } else {
                 self.total_pages - 1
             };
 
-            self.page = std::cmp::min(c_page, max_page);
+            self.current_page.store(std::cmp::min(c_page, max_page), Ordering::Release);
         }
     }
 
     fn handle_inputs(&mut self, i: &InputState) {
         if i.key_pressed(Key::Home) {
-            self.page = 0;
+            self.current_page.store(0, Ordering::Release);
         }
 
         if i.key_pressed(Key::End) {
-            self.page = if self.total_pages <= 1 {
+            self.current_page.store(if self.total_pages <= 1 {
                 0
             } else if self.settings.read().unwrap().double_page {
                 self.total_pages - 2
             } else {
                 self.total_pages - 1
-            };
+            }, Ordering::Release);
         }
 
         if i.key_pressed(Key::ArrowLeft) || i.scroll_delta.x >= 50.0 || i.scroll_delta.y >= 50.0 {
@@ -348,7 +350,7 @@ impl eframe::App for ReaderApp {
                                         return show_err_dialog(anyhow!("Book only contains {} pages", self.total_pages));
                                     }
 
-                                    self.page = page - 1;
+                                    self.current_page.store(page - 1, Ordering::Release);
                                     self.page_prompt = None;
                                 }
 
@@ -387,23 +389,25 @@ impl eframe::App for ReaderApp {
                     }
                 };
 
+                let current_page = self.current_page.load(Ordering::Acquire);
+
                 let pages = if self.total_pages == 0 {
                     ui.heading("Nothing to display");
                     
                     (None, None)
-                } else if !settings.double_page || self.page + 1 == self.total_pages {
+                } else if !settings.double_page || current_page + 1 == self.total_pages {
                     ui.with_layout(Layout::top_down(Align::Center), |ui| {
-                        render_page(ui, self.page);
+                        render_page(ui, current_page);
                     });
 
-                    (Some(self.page), None)
+                    (Some(current_page), None)
                 } else {
                     ui.spacing_mut().item_spacing = Vec2::ZERO;
                     ui.columns(2, |columns| {
                         let (left_page, right_page) = if settings.right_to_left {
-                            (self.page + 1, self.page)
+                            (current_page + 1, current_page)
                         } else {
-                            (self.page, self.page + 1)
+                            (current_page, current_page + 1)
                         };
 
                         columns[0].with_layout(
@@ -421,7 +425,7 @@ impl eframe::App for ReaderApp {
                         );
                     });
 
-                    (Some(self.page), Some(self.page + 1))
+                    (Some(current_page), Some(current_page + 1))
                 };
 
                 if settings.display_pages_number {
