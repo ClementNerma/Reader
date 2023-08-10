@@ -2,14 +2,15 @@ use std::{
     fs,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering, AtomicUsize},
+        atomic::{AtomicBool, Ordering},
         Arc, RwLock,
     },
-    thread::JoinHandle, collections::HashMap, time::Instant,
+    thread::JoinHandle, collections::HashMap, time::{Instant, Duration},
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use egui::{Context, InputState, RichText, Color32, Label, Area, Align2, Vec2, Key, CentralPanel, Frame, Window, Ui, Layout, Align, Spinner,  TextureOptions, ColorImage, vec2, TextureHandle};
+use eyeball::SharedObservable;
 use rfd::FileDialog;
 
 use crate::{
@@ -31,9 +32,9 @@ pub struct ReaderApp {
     total_pages: usize,
 
     loaded_pages: Arc<RwLock<GapVec<Result<(PathBuf, Vec<u8>)>>>>,
-    current_page: Arc<AtomicUsize>,
+    current_page: SharedObservable<usize>,
 
-    page_textures: HashMap<usize, Result<(TextureHandle, Vec2)>>,
+    page_textures: Arc<RwLock<HashMap<usize, Result<(TextureHandle, Vec2)>>>>,
 
     page_prompt: Option<String>,
 }
@@ -69,7 +70,8 @@ impl ReaderApp {
         let total_pages = img_source.total_pages();
         let loaded_pages = Arc::new(RwLock::new(GapVec::new(img_source.total_pages())));
         let threads_stop_signal = Arc::new(AtomicBool::new(false));
-        let current_page = Arc::new(AtomicUsize::new(0));
+        let current_page = SharedObservable::new(0);
+        let page_textures = Arc::new(RwLock::new(HashMap::new()));
 
         let mut thread_handles = vec![];
 
@@ -79,28 +81,119 @@ impl ReaderApp {
             let mut img_source = img_source.quick_clone();
 
             // let path = path.clone();
-            let ctx_bis = ctx.clone();
-            let thread_stop_signal_bis = Arc::clone(&threads_stop_signal);
-            let loaded_pages_bis = Arc::clone(&loaded_pages);
-            let current_page = Arc::clone(&current_page);
+            let ctx = ctx.clone();
+            let thread_stop_signal = Arc::clone(&threads_stop_signal);
+            let loaded_pages = Arc::clone(&loaded_pages);
+            let current_page = current_page.clone();
 
             thread_handles.push(std::thread::spawn(move || {
                 let mut pages_to_load = (0..total_pages).filter(|i| i % threads_count == thread_num).collect::<Vec<_>>();
 
                 while !pages_to_load.is_empty() {
-                    let prioritize_loading_from = current_page.load(Ordering::Acquire);
+                    let prioritize_loading_from = current_page.get();
 
                     let page_index_in_vec = pages_to_load.iter().position(|i| *i >= prioritize_loading_from).unwrap_or(0);
                     let page = pages_to_load.remove(page_index_in_vec);
 
                     let img = img_source.load_page(page);
 
-                    loaded_pages_bis.write().unwrap().set(page, img);
+                    loaded_pages.write().unwrap().set(page, img);
 
-                    ctx_bis.request_repaint();
+                    ctx.request_repaint();
                     
-                    if thread_stop_signal_bis.load(Ordering::Acquire) {
+                    if thread_stop_signal.load(Ordering::Acquire) {
                         return;
+                    }
+                }
+            }));
+        }
+
+        for thread_num in 0..2 {
+            let current_page = current_page.clone();
+            let ctx = ctx.clone();
+            let loaded_pages = Arc::clone(&loaded_pages);
+            let page_textures = Arc::clone(&page_textures);
+
+            thread_handles.push(std::thread::spawn(move || {
+                let mut sub = current_page.subscribe();
+                let mut prev = None;
+
+                // TODO: clean up older pages
+
+                loop {
+                    let new = sub.next_now();
+
+                    if prev.map(|prev| prev == new).unwrap_or(false) {
+                        // TODO: proper waiting
+                        std::thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+
+                    prev = Some(new);
+
+                    let page = new + thread_num;
+
+                    if page >= total_pages {
+                        continue;
+                    }
+
+                    // TODO: proper waiting
+                    while loaded_pages.read().unwrap().get(page).is_none() {
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+
+                    match loaded_pages.read().unwrap().get(page).unwrap() {
+                        Err(err) => {
+                            page_textures.write().unwrap().insert(page, Err(
+                                // TODO
+                                anyhow!("Failed to load page: {err:?}")
+                            ));
+
+                            ctx.request_repaint();
+                        }
+
+                        Ok((filename, bytes)) => {
+                            println!("> Got page {page} as bytes, decoding...");
+
+                            let started = Instant::now();
+
+                            let result = decode_image(filename, bytes);
+
+                            println!("> Image decoding took {} ms", started.elapsed().as_millis());
+
+                            match result {
+                                Ok(DecodedImage { rgb8_pixels, width, height }) => {
+                                    // assert_eq!(size.0 * size.1 * 3, pixels.len());
+
+                                    // let pixels = pixels.chunks_exact(3)
+                                    //     .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
+                                    //     .collect::<Vec<_>>();
+
+                                    let started = Instant::now();
+
+                                    let image = ColorImage::from_rgb([width, height], &rgb8_pixels);
+
+                                    println!("> ColorImage creation took {} ms", started.elapsed().as_millis());
+
+                                    let started = Instant::now();
+
+                                    let texture = ctx.load_texture(page.to_string() /* TODO */, image, TextureOptions::default() /* TODO */);
+
+                                    println!("> Texture loading took {} ms", started.elapsed().as_millis());
+
+                                    page_textures.write().unwrap().insert(page, Ok((texture, vec2(width as f32, height as f32))));
+
+                                    println!("> Requested repaint");
+
+                                    ctx.request_repaint();
+                                },
+
+                                Err(err) => {
+                                    page_textures.write().unwrap().insert(page, Err(anyhow!("Failed to decode PNG image: {err:?}")));                                    
+                                    ctx.request_repaint();
+                                },
+                            }
+                        }
                     }
                 }
             }));
@@ -115,7 +208,7 @@ impl ReaderApp {
             settings,
             total_pages,
             current_page,
-            page_textures: HashMap::new(),
+            page_textures,
             page_prompt: None,
         }
     }
@@ -180,11 +273,11 @@ impl ReaderApp {
         //     inc *= -1;
         // }
 
-        let current_page = self.current_page.load(Ordering::Acquire);
+        let current_page = self.current_page.get();
 
         if inc < 0 {
             let dec = usize::try_from(-inc).unwrap();
-            self.current_page.store(if dec >= current_page { 0 } else { current_page - dec }, Ordering::Release);
+            self.current_page.set(if dec >= current_page { 0 } else { current_page - dec });
         } else {
             let c_page = current_page + usize::try_from(inc).unwrap();
             let max_page = if self.total_pages == 0 {
@@ -193,23 +286,23 @@ impl ReaderApp {
                 self.total_pages - 1
             };
 
-            self.current_page.store(std::cmp::min(c_page, max_page), Ordering::Release);
+             self.current_page.set(  std::cmp::min(c_page, max_page));
         }
     }
 
     fn handle_inputs(&mut self, i: &InputState) {
         if i.key_pressed(Key::Home) {
-            self.current_page.store(0, Ordering::Release);
+            self.current_page.set(0);
         }
 
         if i.key_pressed(Key::End) {
-            self.current_page.store(if self.total_pages <= 1 {
+            self.current_page.set(if self.total_pages <= 1 {
                 0
             } else if self.settings.read().unwrap().double_page {
                 self.total_pages - 2
             } else {
                 self.total_pages - 1
-            }, Ordering::Release);
+            });
         }
 
         if i.key_pressed(Key::ArrowLeft) || i.scroll_delta.x >= 50.0 || i.scroll_delta.y >= 50.0 {
@@ -338,7 +431,7 @@ impl eframe::App for ReaderApp {
                                         return show_err_dialog(anyhow!("Book only contains {} pages", self.total_pages));
                                     }
 
-                                    self.current_page.store(page - 1, Ordering::Release);
+                                    self.current_page.set(page - 1);
                                     self.page_prompt = None;
                                 }
 
@@ -351,11 +444,11 @@ impl eframe::App for ReaderApp {
 
                 let settings = self.settings.read().unwrap();
 
-                let mut render_page = |ui: &mut Ui, page: usize| {
+                let render_page = |ui: &mut Ui, page: usize| {
                     if page >= self.total_pages {
                         ui.label(" "); // Empty widget
                     } else {
-                        match self.page_textures.get(&page) {
+                        match self.page_textures.read().unwrap().get(&page) {
                             Some(result) => {
                                 match result {
                                     Ok((texture_handle, size)) => {
@@ -370,68 +463,14 @@ impl eframe::App for ReaderApp {
                             }
 
                             None => {
-                                match self.loaded_pages.read().unwrap().get(page) {
-                                    Some(result) => {
-                                        match result {
-                                            Ok((page_filename, page_bytes)) => {
-                                                println!("> Got page {page} as bytes, decoding...");
-
-                                                let started = Instant::now();
-
-                                                let result = decode_image(page_filename, page_bytes);
-
-                                                println!("> Image decoding took {} ms", started.elapsed().as_millis());
-
-                                                match result {
-                                                    Ok(DecodedImage { rgb8_pixels, width, height }) => {
-                                                        // assert_eq!(size.0 * size.1 * 3, pixels.len());
-
-                                                        // let pixels = pixels.chunks_exact(3)
-                                                        //     .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
-                                                        //     .collect::<Vec<_>>();
-
-                                                        let started = Instant::now();
-
-                                                        let image = ColorImage::from_rgb([width, height], &rgb8_pixels);
-
-                                                        println!("> ColorImage creation took {} ms", started.elapsed().as_millis());
-
-                                                        let started = Instant::now();
-
-                                                        let texture = self.ctx.load_texture(page.to_string() /* TODO */, image, TextureOptions::default() /* TODO */);
-
-                                                        println!("> Texture loading took {} ms", started.elapsed().as_millis());
-
-                                                        self.page_textures.insert(page, Ok((texture, vec2(width as f32, height as f32))));
-
-                                                        println!("> Requested repaint");
-
-                                                        self.ctx.request_repaint();
-                                                    },
-
-                                                    Err(err) => {
-                                                        self.page_textures.insert(page, Err(anyhow!("Failed to decode PNG image: {err:?}")));
-                                                    },
-                                                }
-                                            },
-
-                                            Err(err) => {
-                                                ui.heading(format!("Failed to decode page's image: {err}"));
-                                            },
-                                        }
-                                    }
-
-                                    None => {
-                                        ui.heading("Loading...");
-                                        ui.add(Spinner::new());
-                                    }
-                                }
+                                ui.heading("Loading...");
+                                ui.add(Spinner::new());
                             }
                         }
                     }
                 };
 
-                let current_page = self.current_page.load(Ordering::Acquire);
+                let current_page = self.current_page.get();
 
                 let pages = if self.total_pages == 0 {
                     ui.heading("Nothing to display");

@@ -1,19 +1,18 @@
 use std::path::Path;
 
 use anyhow::{anyhow, bail, Context, Result};
-use zune_jpeg::zune_core::result::DecodingResult;
-use zune_png::PngDecoder as ZunePngDecoder;
+use zune_png::{zune_core::result::DecodingResult, PngDecoder as ZunePngDecoder};
 
 use super::{DecodedImage, ImageDecoder};
 
 pub struct PngDecoder;
 
 impl ImageDecoder for PngDecoder {
-    fn item_matches(path: &Path) -> bool
+    fn item_matches(filename: &Path) -> bool
     where
         Self: Sized,
     {
-        let Some(ext) = path.extension() else { return false; };
+        let Some(ext) = filename.extension() else { return false; };
         ext.to_ascii_lowercase() == "png"
     }
 

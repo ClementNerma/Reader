@@ -1,10 +1,11 @@
+mod jpeg;
 mod png;
 
 use std::path::Path;
 
 use anyhow::{bail, Result};
 
-use self::png::PngDecoder;
+use self::{jpeg::JpegDecoder, png::PngDecoder};
 
 pub trait ImageDecoder {
     /// Check if a path can be handled by the source
@@ -26,12 +27,14 @@ pub struct DecodedImage {
 }
 
 pub fn is_image_supported(filename: &Path) -> bool {
-    PngDecoder::item_matches(filename)
+    PngDecoder::item_matches(filename) || JpegDecoder::item_matches(filename)
 }
 
 pub fn decode_image(filename: &Path, raw: &[u8]) -> Result<DecodedImage> {
     if PngDecoder::item_matches(filename) {
         PngDecoder::decode(raw)
+    } else if JpegDecoder::item_matches(filename) {
+        JpegDecoder::decode(raw)
     } else {
         bail!("Unsupported image type provided");
     }

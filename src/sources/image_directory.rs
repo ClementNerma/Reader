@@ -36,11 +36,11 @@ impl ImageSource for ImageDirectory {
             .filter_map(|item| {
                 let path = item.path();
 
-                if path.is_file() && !is_image_supported(&path) {
-                    return None;
+                if path.is_file() && is_image_supported(&path) {
+                    Some(path)
+                } else {
+                    None
                 }
-
-                Some(path)
             })
             .collect::<Vec<_>>();
 
