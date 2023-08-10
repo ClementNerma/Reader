@@ -11,13 +11,10 @@ eframe = { version = "0.22.0", default-features = false, features = [
     "ron",
 ] }
 egui = "0.22.0"
-egui_extras = { version = "0.22.0", features = ["image"] }
-image = { version = "0.24.6", default-features = false, features = [
-    "png",
-    "jpeg",
-] }
 num_cpus = "1.16.0"
 once_cell = "1.18.0"
 rfd = "0.11.4"
 serde = { version = "1.0.183", features = ["derive"] }
 zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
+zune-jpeg = "0.3.17"
+zune-png = "0.2.1"

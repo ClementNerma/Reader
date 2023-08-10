@@ -4,7 +4,7 @@ mod zip_file;
 
 pub use empty::EmptySource;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
@@ -28,14 +28,11 @@ pub trait ImageSource: Send + Sync {
     fn total_pages(&self) -> usize;
 
     /// Load a page (= an image) as a vector of bytes
-    fn load_page(&mut self, page: usize) -> Result<Vec<u8>>;
+    fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>)>;
 
     /// Quick clone
     fn quick_clone(&self) -> Box<dyn ImageSource>;
 }
-
-/// List of supported image extensions (used for filtering)
-static IMG_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
 
 /// Try to load a path as an image source
 pub fn load_image_source(path: &Path) -> Result<Box<dyn ImageSource>> {

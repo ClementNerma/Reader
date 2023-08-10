@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Result};
 
@@ -33,7 +33,7 @@ impl ImageSource for EmptySource {
         0
     }
 
-    fn load_page(&mut self, _: usize) -> Result<Vec<u8>> {
+    fn load_page(&mut self, _: usize) -> Result<(PathBuf, Vec<u8>)> {
         bail!("Cannot load any page from an empty source")
     }
 

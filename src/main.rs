@@ -6,12 +6,10 @@
 
 use std::path::PathBuf;
 
-// Required for image decoding support
-use image as _;
-
+mod decoders;
 mod gap_vec;
-mod img_sources;
 mod settings;
+mod sources;
 mod ui;
 
 use eframe::NativeOptions;

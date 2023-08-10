@@ -1,14 +1,14 @@
 use std::{
     fs::File,
     io,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{Arc, RwLock},
 };
 
 use anyhow::{Context, Result};
 use zip::ZipArchive;
 
-use crate::img_sources::IMG_EXTENSIONS;
+use crate::decoders::is_image_supported;
 
 use super::ImageSource;
 
@@ -52,15 +52,15 @@ impl ImageSource for ZipFile {
                 .by_index(i)
                 .context("Failed to read file in archive")?;
 
+            if !item.is_file() {
+                continue;
+            }
+
             let Some(item_path) = item.enclosed_name() else {
                 continue;
             };
 
-            let Some(ext) = item_path.extension() else {
-                continue;
-            };
-
-            if item.is_file() && IMG_EXTENSIONS.iter().any(|c| *c == ext) {
+            if is_image_supported(item_path) {
                 page_files.push((i, item_path.to_path_buf()));
             }
         }
@@ -77,7 +77,7 @@ impl ImageSource for ZipFile {
         self.page_file_indexes.len()
     }
 
-    fn load_page(&mut self, page: usize) -> Result<Vec<u8>> {
+    fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>)> {
         let mut archive = self.archive.write().unwrap();
 
         let mut file = archive
@@ -88,7 +88,7 @@ impl ImageSource for ZipFile {
 
         io::copy(&mut file, &mut out).context("Failed to read page file's content from archive")?;
 
-        Ok(out)
+        Ok((file.mangled_name(), out))
     }
 
     fn quick_clone(&self) -> Box<dyn ImageSource>

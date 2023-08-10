@@ -5,7 +5,9 @@ use std::{
 
 use anyhow::{Context, Result};
 
-use super::{ImageSource, IMG_EXTENSIONS};
+use crate::decoders::is_image_supported;
+
+use super::ImageSource;
 
 /// Handler for directory of images
 #[derive(Clone)]
@@ -34,16 +36,7 @@ impl ImageSource for ImageDirectory {
             .filter_map(|item| {
                 let path = item.path();
 
-                if !path.is_file() {
-                    return None;
-                }
-
-                let ext = path.extension()?.to_str()?;
-
-                if !IMG_EXTENSIONS
-                    .iter()
-                    .any(|c| ext.to_ascii_lowercase() == c.to_ascii_lowercase())
-                {
+                if path.is_file() && !is_image_supported(&path) {
                     return None;
                 }
 
@@ -60,9 +53,11 @@ impl ImageSource for ImageDirectory {
         self.image_files.len()
     }
 
-    fn load_page(&mut self, page: usize) -> Result<Vec<u8>> {
+    fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>)> {
         let page_path = self.image_files.get(page).context("Page not found")?;
-        Ok(fs::read(page_path)?)
+        fs::read(page_path)
+            .map(|page| (page_path.to_owned(), page))
+            .map_err(Into::into)
     }
 
     fn quick_clone(&self) -> Box<dyn ImageSource>

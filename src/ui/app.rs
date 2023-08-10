@@ -5,19 +5,18 @@ use std::{
         atomic::{AtomicBool, Ordering, AtomicUsize},
         Arc, RwLock,
     },
-    thread::JoinHandle, borrow::Cow,
+    thread::JoinHandle, collections::HashMap, time::Instant,
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
-use egui::{Context, InputState, RichText, Color32, Label, Area, Align2, Vec2, Key, CentralPanel, Frame, Window, Ui, Layout, Align, Spinner};
-use egui_extras::RetainedImage;
+use egui::{Context, InputState, RichText, Color32, Label, Area, Align2, Vec2, Key, CentralPanel, Frame, Window, Ui, Layout, Align, Spinner,  TextureOptions, ColorImage, vec2, TextureHandle};
 use rfd::FileDialog;
 
 use crate::{
     gap_vec::GapVec,
-    img_sources::{load_image_source, ImageSource, EmptySource},
+    sources::{load_image_source, ImageSource, EmptySource},
     settings::Settings,
-    show_err_dialog, LOGICAL_CORES,
+    show_err_dialog, LOGICAL_CORES, decoders::{decode_image, DecodedImage},
 };
 
 pub struct ReaderApp {
@@ -31,8 +30,10 @@ pub struct ReaderApp {
     path: Option<PathBuf>,
     total_pages: usize,
 
-    loaded_pages: Arc<RwLock<GapVec<Result<RetainedImage>>>>,
+    loaded_pages: Arc<RwLock<GapVec<Result<(PathBuf, Vec<u8>)>>>>,
     current_page: Arc<AtomicUsize>,
+
+    page_textures: HashMap<usize, Result<(TextureHandle, Vec2)>>,
 
     page_prompt: Option<String>,
 }
@@ -77,27 +78,13 @@ impl ReaderApp {
         for thread_num in 0..threads_count {
             let mut img_source = img_source.quick_clone();
 
-            let path = path.clone();
+            // let path = path.clone();
             let ctx_bis = ctx.clone();
             let thread_stop_signal_bis = Arc::clone(&threads_stop_signal);
             let loaded_pages_bis = Arc::clone(&loaded_pages);
             let current_page = Arc::clone(&current_page);
 
             thread_handles.push(std::thread::spawn(move || {
-                let mut load_page = |page: usize| -> Result<RetainedImage> {
-                    let img_debug_name = format!("{}:[page {}]", match path {
-                        Some(ref path) => path.to_string_lossy(),
-                        None => Cow::Borrowed("<no path>")
-                    }, page);
-
-                    let img_bytes = img_source.load_page(page)?;
-
-                    let img = RetainedImage::from_image_bytes(img_debug_name, &img_bytes)
-                        .map_err(|err| anyhow!("Failed to decode image: {err}"))?;
-
-                    Ok(img)
-                };
-
                 let mut pages_to_load = (0..total_pages).filter(|i| i % threads_count == thread_num).collect::<Vec<_>>();
 
                 while !pages_to_load.is_empty() {
@@ -106,7 +93,7 @@ impl ReaderApp {
                     let page_index_in_vec = pages_to_load.iter().position(|i| *i >= prioritize_loading_from).unwrap_or(0);
                     let page = pages_to_load.remove(page_index_in_vec);
 
-                    let img = load_page(page);
+                    let img = img_source.load_page(page);
 
                     loaded_pages_bis.write().unwrap().set(page, img);
 
@@ -128,6 +115,7 @@ impl ReaderApp {
             settings,
             total_pages,
             current_page,
+            page_textures: HashMap::new(),
             page_prompt: None,
         }
     }
@@ -363,28 +351,82 @@ impl eframe::App for ReaderApp {
 
                 let settings = self.settings.read().unwrap();
 
-                let render_page = |ui: &mut Ui, page: usize| {
+                let mut render_page = |ui: &mut Ui, page: usize| {
                     if page >= self.total_pages {
                         ui.label(" "); // Empty widget
                     } else {
-                        match self.loaded_pages.read().unwrap().get(page) {
-                            None => {
-                                ui.heading("Loading...");
-                                ui.add(Spinner::new());
+                        match self.page_textures.get(&page) {
+                            Some(result) => {
+                                match result {
+                                    Ok((texture_handle, size)) => {
+                                        let scale = frame.info().window_info.size.y / size.y;
+                                        ui.image(texture_handle.id(), *size * scale);
+                                    },
+
+                                    Err(err) => {
+                                        ui.heading(format!("Failed to load page: {err}"));
+                                    },
+                                }
                             }
 
-                            Some(page_img) => match page_img {
-                                Ok(page_img) => {
-                                    let scale = frame.info().window_info.size.y
-                                        / f32::from(u16::try_from(page_img.height()).unwrap());
+                            None => {
+                                match self.loaded_pages.read().unwrap().get(page) {
+                                    Some(result) => {
+                                        match result {
+                                            Ok((page_filename, page_bytes)) => {
+                                                println!("> Got page {page} as bytes, decoding...");
 
-                                    page_img.show_scaled(ui, scale);
-                                }
+                                                let started = Instant::now();
 
-                                Err(err) => {
-                                    ui.heading(format!("Failed to load: {err}"));
+                                                let result = decode_image(page_filename, page_bytes);
+
+                                                println!("> Image decoding took {} ms", started.elapsed().as_millis());
+
+                                                match result {
+                                                    Ok(DecodedImage { rgb8_pixels, width, height }) => {
+                                                        // assert_eq!(size.0 * size.1 * 3, pixels.len());
+
+                                                        // let pixels = pixels.chunks_exact(3)
+                                                        //     .map(|p| Color32::from_rgb(p[0], p[1], p[2]))
+                                                        //     .collect::<Vec<_>>();
+
+                                                        let started = Instant::now();
+
+                                                        let image = ColorImage::from_rgb([width, height], &rgb8_pixels);
+
+                                                        println!("> ColorImage creation took {} ms", started.elapsed().as_millis());
+
+                                                        let started = Instant::now();
+
+                                                        let texture = self.ctx.load_texture(page.to_string() /* TODO */, image, TextureOptions::default() /* TODO */);
+
+                                                        println!("> Texture loading took {} ms", started.elapsed().as_millis());
+
+                                                        self.page_textures.insert(page, Ok((texture, vec2(width as f32, height as f32))));
+
+                                                        println!("> Requested repaint");
+
+                                                        self.ctx.request_repaint();
+                                                    },
+
+                                                    Err(err) => {
+                                                        self.page_textures.insert(page, Err(anyhow!("Failed to decode PNG image: {err:?}")));
+                                                    },
+                                                }
+                                            },
+
+                                            Err(err) => {
+                                                ui.heading(format!("Failed to decode page's image: {err}"));
+                                            },
+                                        }
+                                    }
+
+                                    None => {
+                                        ui.heading("Loading...");
+                                        ui.add(Spinner::new());
+                                    }
                                 }
-                            },
+                            }
                         }
                     }
                 };
