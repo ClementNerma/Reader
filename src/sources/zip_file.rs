@@ -77,16 +77,18 @@ impl ImageSource for ZipFile {
         self.page_file_indexes.len()
     }
 
-    fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>)> {
+    fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>), String> {
         let mut archive = self.archive.write().unwrap();
 
         let mut file = archive
             .by_index(self.page_file_indexes[page])
-            .context("Failed to read file in archive")?;
+            .map_err(|err| format!("Failed to read file in archive for page {page}: {err}"))?;
 
         let mut out = vec![];
 
-        io::copy(&mut file, &mut out).context("Failed to read page file's content from archive")?;
+        io::copy(&mut file, &mut out).map_err(|err| {
+            format!("Failed to read page file's content from archive for page {page}: {err}")
+        })?;
 
         Ok((file.mangled_name(), out))
     }

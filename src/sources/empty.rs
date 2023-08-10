@@ -33,8 +33,8 @@ impl ImageSource for EmptySource {
         0
     }
 
-    fn load_page(&mut self, _: usize) -> Result<(PathBuf, Vec<u8>)> {
-        bail!("Cannot load any page from an empty source")
+    fn load_page(&mut self, _: usize) -> Result<(PathBuf, Vec<u8>), String> {
+        Err("Cannot load any page from an empty source".to_owned())
     }
 
     fn quick_clone(&self) -> Box<dyn ImageSource>

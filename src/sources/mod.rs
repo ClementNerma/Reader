@@ -28,7 +28,7 @@ pub trait ImageSource: Send + Sync {
     fn total_pages(&self) -> usize;
 
     /// Load a page (= an image) as a vector of bytes
-    fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>)>;
+    fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>), String>;
 
     /// Quick clone
     fn quick_clone(&self) -> Box<dyn ImageSource>;

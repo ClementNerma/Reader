@@ -649,16 +649,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
 
 [[package]]
-name = "eyeball"
-version = "0.8.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78a7b57c052e83f2bd8d756fc379132e43d3786f3767856026ee3757868f099f"
-dependencies = [
- "futures-core",
- "readlock",
-]
-
-[[package]]
 name = "fastrand"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1559,7 +1549,6 @@ dependencies = [
  "anyhow",
  "eframe",
  "egui",
- "eyeball",
  "num_cpus",
  "once_cell",
  "rfd",
@@ -1568,12 +1557,6 @@ dependencies = [
  "zune-jpeg",
  "zune-png",
 ]
-
-[[package]]
-name = "readlock"
-version = "0.1.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7b323e7196daa571c8584de958be19e92941c41f845776fe06babfe8fa280a2"
 
 [[package]]
 name = "redox_syscall"

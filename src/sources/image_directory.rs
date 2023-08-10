@@ -3,7 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 use crate::decoders::is_image_supported;
 
@@ -53,11 +53,15 @@ impl ImageSource for ImageDirectory {
         self.image_files.len()
     }
 
-    fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>)> {
-        let page_path = self.image_files.get(page).context("Page not found")?;
+    fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>), String> {
+        let page_path = self
+            .image_files
+            .get(page)
+            .ok_or_else(|| format!("Page {page} was not found"))?;
+
         fs::read(page_path)
             .map(|page| (page_path.to_owned(), page))
-            .map_err(Into::into)
+            .map_err(|err| format!("Failed to load file for page {page}: {err}"))
     }
 
     fn quick_clone(&self) -> Box<dyn ImageSource>
