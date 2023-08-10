@@ -31,7 +31,6 @@ pub struct ReaderApp {
     path: Option<PathBuf>,
     total_pages: usize,
 
-    loaded_pages: Arc<RwLock<GapVec<Result<(PathBuf, Vec<u8>)>>>>,
     current_page: SharedObservable<usize>,
 
     page_textures: Arc<RwLock<HashMap<usize, Result<(TextureHandle, Vec2)>>>>,
@@ -204,7 +203,6 @@ impl ReaderApp {
             thread_handles,
             threads_stop_signal,
             path,
-            loaded_pages,
             settings,
             total_pages,
             current_page,
