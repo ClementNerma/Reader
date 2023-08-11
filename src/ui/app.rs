@@ -185,6 +185,8 @@ impl ReaderApp {
         }
 
         // Then re-create the application (which will set up new threads)
+        // NOTE: it's crucial that this function call doesn't fail (e.g. not return an error)
+        //       otherwise, we'd be let with an inconsistent state (no thread to load pages)
         *self = Self::create(
             self.ctx.clone(),
             img_source,
