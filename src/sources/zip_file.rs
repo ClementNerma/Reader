@@ -1,21 +1,20 @@
 use std::{
     fs::File,
-    io,
+    io::{self, BufReader},
     path::{Path, PathBuf},
-    sync::{Arc, RwLock},
 };
 
 use anyhow::{Context, Result};
-use zip::ZipArchive;
+use zip_next::ZipArchive;
 
 use crate::decoders::is_image_supported;
 
 use super::ImageSource;
 
 /// ZIP archive handler
-#[derive(Clone)]
 pub struct ZipFile {
-    archive: Arc<RwLock<ZipArchive<File>>>,
+    path: PathBuf,
+    archive: ZipArchive<BufReader<File>>,
     page_file_indexes: Vec<usize>,
 }
 
@@ -32,7 +31,9 @@ impl ImageSource for ZipFile {
             return false;
         };
 
-        ext.to_ascii_lowercase() == "zip" || ext.to_ascii_lowercase() == "cbz"
+        let lower_ext = ext.to_ascii_lowercase();
+
+        lower_ext == "zip" || lower_ext == "cbz"
     }
 
     fn load(path: &Path) -> Result<Self>
@@ -42,14 +43,15 @@ impl ImageSource for ZipFile {
         assert!(Self::item_matches(path));
 
         let file = File::open(path).context("Failed to open archive file")?;
+        let buf = BufReader::new(file);
 
-        let mut archive = ZipArchive::new(file).context("Failed to open archive content")?;
+        let mut archive = ZipArchive::new(buf).context("Failed to open archive content")?;
 
         let mut page_files = vec![];
 
         for i in 0..archive.len() {
             let item = archive
-                .by_index(i)
+                .by_index_raw(i)
                 .context("Failed to read file in archive")?;
 
             if !item.is_file() {
@@ -68,7 +70,8 @@ impl ImageSource for ZipFile {
         page_files.sort_by(|(_, a), (_, b)| a.cmp(b));
 
         Ok(Self {
-            archive: Arc::new(RwLock::new(archive)),
+            path: path.to_owned(),
+            archive,
             page_file_indexes: page_files.into_iter().map(|(i, _)| i).collect(),
         })
     }
@@ -78,9 +81,8 @@ impl ImageSource for ZipFile {
     }
 
     fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>), String> {
-        let mut archive = self.archive.write().unwrap();
-
-        let mut file = archive
+        let mut file = self
+            .archive
             .by_index(self.page_file_indexes[page])
             .map_err(|err| format!("Failed to read file in archive for page {page}: {err}"))?;
 
@@ -93,10 +95,16 @@ impl ImageSource for ZipFile {
         Ok((file.mangled_name(), out))
     }
 
-    fn quick_clone(&self) -> Box<dyn ImageSource>
+    fn quick_clone(&self) -> Result<Box<dyn ImageSource>>
     where
         Self: Sized,
     {
-        Box::new(self.clone())
+        let clone = Self {
+            path: self.path.clone(),
+            archive: ZipArchive::new(BufReader::new(File::open(&self.path)?))?,
+            page_file_indexes: self.page_file_indexes.clone(),
+        };
+
+        Ok(Box::new(clone))
     }
 }

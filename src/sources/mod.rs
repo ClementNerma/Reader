@@ -31,7 +31,7 @@ pub trait ImageSource: Send + Sync {
     fn load_page(&mut self, page: usize) -> Result<(PathBuf, Vec<u8>), String>;
 
     /// Quick clone
-    fn quick_clone(&self) -> Box<dyn ImageSource>;
+    fn quick_clone(&self) -> Result<Box<dyn ImageSource>>;
 }
 
 /// Try to load a path as an image source

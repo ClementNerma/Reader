@@ -5,7 +5,7 @@ use std::{
         atomic::{AtomicBool, Ordering, AtomicUsize},
         Arc, RwLock,
     },
-    thread::JoinHandle, time::Instant, cell::RefCell,
+    thread::JoinHandle, cell::RefCell,
 };
 
 use anyhow::{anyhow, bail, Context as _, Result};
@@ -104,7 +104,7 @@ impl ReaderApp {
 
         // Create the loading threads
         for thread_num in 0..threads_count {
-            let mut img_source = img_source.quick_clone();
+            let mut img_source = img_source.quick_clone().unwrap();
 
             let ctx = ctx.clone();
             let thread_stop_signal = Arc::clone(&threads_stop_signal);
@@ -155,7 +155,6 @@ impl ReaderApp {
                 }
             }));
         }
-
         
         Self {
             ctx,
@@ -373,8 +372,6 @@ impl ReaderApp {
 
     /// Compute a displayable image for a given page
     fn compute_displayable_page(&self, page: usize) -> Result<Option<(TextureHandle, Vec2)>, String> {
-        let started = Instant::now();
-
         let Some(result) = self.loaded_pages.read().unwrap().get(page).cloned() else {
             return Ok(None);
         };
@@ -386,8 +383,6 @@ impl ReaderApp {
         let image = ColorImage::from_rgb([width, height], &rgb8_pixels);
 
         let tex_handle = self.ctx.load_texture(format!("{}:[page-{page}]", filename.to_string_lossy()), image, TextureOptions::default());
-
-        println!("> Computed displayable page {page} in {} ms", started.elapsed().as_millis());
 
         Ok(Some((tex_handle, vec2(width as f32, height as f32))))
     }
@@ -466,6 +461,7 @@ impl eframe::App for ReaderApp {
                             println!("> Loaded page {page} from cache");
                             Ok(Some((tex_handle.clone(), *size)))
                         } else {
+                            println!("> Computing displayable image for page {page}...");
                             self.compute_displayable_page(page)
                         };
 

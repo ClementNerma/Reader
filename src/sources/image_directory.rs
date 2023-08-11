@@ -64,10 +64,10 @@ impl ImageSource for ImageDirectory {
             .map_err(|err| format!("Failed to load file for page {page}: {err}"))
     }
 
-    fn quick_clone(&self) -> Box<dyn ImageSource>
+    fn quick_clone(&self) -> Result<Box<dyn ImageSource>>
     where
         Self: Sized,
     {
-        Box::new(self.clone())
+        Ok(Box::new(self.clone()))
     }
 }

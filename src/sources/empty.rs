@@ -37,10 +37,10 @@ impl ImageSource for EmptySource {
         Err("Cannot load any page from an empty source".to_owned())
     }
 
-    fn quick_clone(&self) -> Box<dyn ImageSource>
+    fn quick_clone(&self) -> Result<Box<dyn ImageSource>>
     where
         Self: Sized,
     {
-        Box::new(Self)
+        Ok(Box::new(Self))
     }
 }
