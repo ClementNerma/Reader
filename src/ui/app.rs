@@ -242,15 +242,15 @@ impl ReaderApp {
 
         let settings = self.settings.read().unwrap();
 
-        if settings.double_page && !shift {
+        let current_page = self.current_page.load(Ordering::Acquire);
+
+        if settings.double_page && !shift && (current_page != 0 || !settings.display_first_page_in_single_mode) {
             inc *= 2;
         }
 
         // if settings.right_to_left {
         //     inc *= -1;
         // }
-
-        let current_page = self.current_page.load(Ordering::Acquire);
 
         if inc < 0 {
             let dec = usize::try_from(-inc).unwrap();
@@ -496,7 +496,7 @@ impl eframe::App for ReaderApp {
                     ui.heading("Nothing to display");
                     
                     (None, None)
-                } else if !settings.double_page || current_page + 1 == self.total_pages {
+                } else if !settings.double_page || current_page + 1 == self.total_pages || (current_page == 0 && settings.display_first_page_in_single_mode) {
                     ui.with_layout(Layout::top_down(Align::Center), |ui| {
                         render_page(ui, current_page);
                     });
